@@ -109,12 +109,15 @@ def _migrate_sqlite() -> None:
                     "WHERE name IS NULL OR TRIM(name) = ''"
                 )
             )
-            conn.execute(
-                text(
-                    "UPDATE profiles SET is_active = 1 "
-                    "WHERE profile_key = 'default' AND is_active = 0"
+            # Legacy-only: the old 'profile_key' column does not exist on a fresh DB,
+            # so only run this UPDATE when that column is actually present.
+            if "profile_key" in profile_columns:
+                conn.execute(
+                    text(
+                        "UPDATE profiles SET is_active = 1 "
+                        "WHERE profile_key = 'default' AND is_active = 0"
+                    )
                 )
-            )
             conn.execute(
                 text(
                     "UPDATE profiles SET is_active = 1 "
