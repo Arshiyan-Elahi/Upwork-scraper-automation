@@ -1,0 +1,29 @@
+PROJECT: AI Freelance Opportunity Intelligence Platform — FRONTEND ONLY.
+STACK: React + TypeScript + Vite. No backend. No API calls. Mock data only.
+
+NON-NEGOTIABLE RULES:
+- TypeScript strict mode. No `any`. Every prop, state, and mock object is typed.
+- All shared types live in src/types/index.ts. Import from there — never redefine inline.
+- All mock data lives in src/mockData/. Components import mock data, never hardcode arrays inside JSX.
+- Reusable components only. If a UI pattern (badge, card, button) appears twice, it is a component in src/components/ui/.
+- Styling: use ONE approach consistently (Tailwind CSS). No inline style objects except for dynamic values (e.g. a computed width).
+- Design tokens (colors, spacing, radius, shadows) defined once in the Tailwind config / a theme file. Never hardcode hex values in components.
+- Every list/table page must implement: empty state, loading state, error state.
+- Do NOT install heavy UI kits (no MUI, no Ant). Allowed libs: tailwindcss, lucide-react (icons), recharts (charts), react-router-dom. Ask before adding anything else.
+- Keep components under ~150 lines. Split when larger.
+- When I give you a prompt, build ONLY what that prompt asks. Do not scaffold future pages early.
+
+
+
+PROJECT: Backend for a personal freelance-intelligence tool. Python + FastAPI + SQLite.
+This is a SINGLE-USER LOCAL tool for now, but write it cloud-ready (config via environment variables, no hardcoded paths or secrets).
+
+NON-NEGOTIABLE RULES:
+- Do NOT modify anything in the frontend/ folder. Backend is fully separate, in backend/.
+- All secrets (Gmail credentials, etc.) come from a .env file loaded via environment variables. NEVER hardcode credentials. Add .env to .gitignore.
+- The tool connects ONLY to the dedicated job-alerts inbox. It must never be able to reach a personal inbox — there is only one set of credentials and it is the dedicated inbox's.
+- Email access is READ-ONLY in spirit: the tool reads emails and may mark them processed via a label/flag, but never deletes or sends email.
+- Use SQLite for now via SQLAlchemy, but structure models so moving to Postgres later needs only a connection-string change.
+- Keep functions small and single-purpose. Ingestion must be callable as a standalone function (so it can run manually now and on a scheduler later on a VPS).
+- Type hints everywhere. No bare except. Log what happens (emails scanned, jobs added, duplicates skipped, parse failures).
+- Do not build scoring, proposals, or LLM features yet. This phase is ONLY: config + database + email ingestion + a couple of API endpoints to view results.

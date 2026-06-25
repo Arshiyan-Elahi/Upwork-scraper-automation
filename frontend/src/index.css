@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-surface-secondary text-content dark:bg-surface-dark-default dark:text-content-dark-default;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply border border-border/60 bg-surface/70 backdrop-blur-glass dark:border-border-dark/60 dark:bg-surface-dark-secondary/70;
+  }
+
+  .glass-strong {
+    @apply border border-border/80 bg-surface/85 backdrop-blur-glass dark:border-border-dark/80 dark:bg-surface-dark-secondary/85;
+  }
+}
