@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-20250514"
     openai_model: str = "gpt-4o-mini"
 
+    # Localhost dev origins, always allowed so local development keeps working.
     cors_origins: str = (
         "http://localhost:5173,"
         "http://127.0.0.1:5173,"
@@ -31,11 +32,23 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5175"
     )
 
+    # Extra allowed origins for deployed frontends (comma-separated).
+    # e.g. CORS_ALLOW_ORIGINS="http://45.11.231.77:3000,https://app.example.com"
+    # These are added ON TOP OF the localhost defaults above — no IP is hardcoded.
+    cors_allow_origins: str = ""
+
     webhook_secret: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        """Localhost defaults + any CORS_ALLOW_ORIGINS entries, deduped (order preserved)."""
+        merged: list[str] = []
+        for source in (self.cors_origins, self.cors_allow_origins):
+            for origin in source.split(","):
+                cleaned = origin.strip().rstrip("/")
+                if cleaned and cleaned not in merged:
+                    merged.append(cleaned)
+        return merged
 
 
 @lru_cache
