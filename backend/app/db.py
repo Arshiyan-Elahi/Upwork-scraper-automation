@@ -165,48 +165,167 @@ def init_db() -> None:
     backfill_unowned_data_to_first_user()
 
 
-def backfill_unowned_data_to_first_user() -> None:
-    """Assign all pre-existing (user_id IS NULL) per-user rows to the first user.
+# Per-user columns that no longer belong on the shared `jobs` table — they moved
+# to `user_job_state`. Used by both the backfill (to preserve values) and the
+# table rebuild (to physically remove them from legacy DBs).
+_LEGACY_JOB_STATE_COLUMNS = (
+    "stage",
+    "outcome",
+    "submitted_proposal_text",
+    "submitted_variant_label",
+    "fit_score",
+    "fit_recommendation",
+    "fit_reasons",
+    "fit_concerns",
+    "fit_angle",
+    "fit_scored_at",
+)
 
-    Safe + idempotent: only touches NULL rows, and does nothing when no user
-    exists yet (fresh DB, or a deployed DB where nobody has signed up). The first
-    signup also calls this so legacy data is claimed by the initial account.
+# The objective columns the shared `jobs` table keeps (must match the Job model).
+_SHARED_JOB_COLUMNS = (
+    "id",
+    "external_id",
+    "title",
+    "description",
+    "budget",
+    "budget_type",
+    "skills",
+    "job_url",
+    "posted_date",
+    "source",
+    "raw_email_id",
+    "client_rating",
+    "client_spend",
+    "client_country",
+    "payment_verified",
+    "created_at",
+)
+
+
+def backfill_unowned_data_to_first_user() -> None:
+    """Assign all pre-existing (user_id IS NULL) per-user rows to the first user
+    and strip legacy per-user columns off the shared `jobs` table.
+
+    Safe + idempotent: only touches NULL rows, preserves legacy job state into
+    user_job_state before any column is removed, and does the row-claiming nothing
+    when no user exists yet. The first signup also calls this so legacy data is
+    claimed by the initial account.
     """
     with SessionLocal() as db:
         first_user_id = db.execute(text("SELECT MIN(id) FROM users")).scalar()
-        if first_user_id is None:
-            return
+        if first_user_id is not None:
+            for table in (
+                "profiles",
+                "portfolio_items",
+                "winning_proposals",
+                "llm_credentials",
+                "generation_logs",
+                "proposal_portfolio_links",
+                "portfolio_outcome_boosts",
+            ):
+                db.execute(
+                    text(f"UPDATE {table} SET user_id = :uid WHERE user_id IS NULL"),
+                    {"uid": first_user_id},
+                )
 
-        for table in (
-            "profiles",
-            "portfolio_items",
-            "winning_proposals",
-            "llm_credentials",
-            "generation_logs",
-            "proposal_portfolio_links",
-            "portfolio_outcome_boosts",
-        ):
+            # app_settings: claim the legacy global 'default' row and re-key it
+            # per-user so it satisfies the unique(settings_key) constraint.
             db.execute(
-                text(f"UPDATE {table} SET user_id = :uid WHERE user_id IS NULL"),
+                text(
+                    "UPDATE app_settings SET user_id = :uid, settings_key = :skey "
+                    "WHERE user_id IS NULL AND settings_key = 'default'"
+                ),
+                {"uid": first_user_id, "skey": f"user:{first_user_id}"},
+            )
+            db.execute(
+                text("UPDATE app_settings SET user_id = :uid WHERE user_id IS NULL"),
                 {"uid": first_user_id},
             )
 
-        # app_settings: claim the legacy global 'default' row and re-key it per-user
-        # so it satisfies the unique(settings_key) constraint.
-        db.execute(
-            text(
-                "UPDATE app_settings SET user_id = :uid, settings_key = :skey "
-                "WHERE user_id IS NULL AND settings_key = 'default'"
-            ),
-            {"uid": first_user_id, "skey": f"user:{first_user_id}"},
-        )
-        db.execute(
-            text("UPDATE app_settings SET user_id = :uid WHERE user_id IS NULL"),
-            {"uid": first_user_id},
-        )
+            # Preserve any legacy per-user job state BEFORE we drop those columns.
+            _backfill_job_state(db, first_user_id)
+            db.commit()
 
-        _backfill_job_state(db, first_user_id)
-        db.commit()
+    # Physically remove the legacy per-user columns from the shared jobs table so
+    # inserts (e.g. the public webhook) succeed without a stage/fit. Runs after the
+    # job-state values above are safely copied.
+    _drop_legacy_job_state_columns(first_user_id)
+
+
+def _drop_legacy_job_state_columns(first_user_id: int | None) -> None:
+    """Rebuild `jobs` without the legacy per-user columns. Guarded + idempotent.
+
+    SQLite's ALTER TABLE DROP COLUMN is limited across versions, so we rebuild the
+    table with only the objective columns and copy the data over.
+    """
+    if not engine.url.get_backend_name().startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(jobs)")).fetchall()}
+        legacy_present = [c for c in _LEGACY_JOB_STATE_COLUMNS if c in cols]
+        if not legacy_present:
+            return  # fresh DB or already migrated — nothing to do
+
+        # Without an owner we cannot preserve per-user job state. If such state
+        # exists, defer the rebuild until the first signup (which sets a user and
+        # re-runs this) so nothing is lost.
+        if first_user_id is None and _has_legacy_job_state(conn, legacy_present):
+            return
+
+        shared_cols = [c for c in _SHARED_JOB_COLUMNS if c in cols]
+        col_list = ", ".join(shared_cols)
+
+        conn.execute(
+            text(
+                "CREATE TABLE jobs_new ("
+                "id INTEGER NOT NULL PRIMARY KEY, "
+                "external_id VARCHAR(255), "
+                "title VARCHAR(500) NOT NULL, "
+                "description TEXT, "
+                "budget VARCHAR(255), "
+                "budget_type VARCHAR(50), "
+                "skills JSON, "
+                "job_url VARCHAR(2048), "
+                "posted_date DATETIME, "
+                "source VARCHAR(50) NOT NULL DEFAULT 'extension', "
+                "raw_email_id VARCHAR(512), "
+                "client_rating FLOAT, "
+                "client_spend VARCHAR(100), "
+                "client_country VARCHAR(100), "
+                "payment_verified BOOLEAN, "
+                "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        )
+        conn.execute(text(f"INSERT INTO jobs_new ({col_list}) SELECT {col_list} FROM jobs"))
+        conn.execute(text("DROP TABLE jobs"))
+        conn.execute(text("ALTER TABLE jobs_new RENAME TO jobs"))
+
+        # Recreate the indexes/uniques the model defines on jobs.
+        conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_job_url ON jobs(job_url)")
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_created_at ON jobs(created_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_external_id ON jobs(external_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_raw_email_id ON jobs(raw_email_id)"))
+
+
+def _has_legacy_job_state(conn, legacy_present: list[str]) -> bool:
+    """True if any job still carries per-user state worth preserving."""
+    conditions: list[str] = []
+    if "stage" in legacy_present:
+        conditions.append("(stage IS NOT NULL AND stage <> 'found')")
+    if "outcome" in legacy_present:
+        conditions.append("outcome IS NOT NULL")
+    if "submitted_proposal_text" in legacy_present:
+        conditions.append("submitted_proposal_text IS NOT NULL")
+    if "fit_scored_at" in legacy_present:
+        conditions.append("fit_scored_at IS NOT NULL")
+    if not conditions:
+        return False
+    where = " OR ".join(conditions)
+    return conn.execute(text(f"SELECT 1 FROM jobs WHERE {where} LIMIT 1")).first() is not None
 
 
 def _backfill_job_state(db: Session, user_id: int) -> None:
@@ -214,19 +333,7 @@ def _backfill_job_state(db: Session, user_id: int) -> None:
     job_columns = {
         row[1] for row in db.execute(text("PRAGMA table_info(jobs)")).fetchall()
     }
-    legacy_fields = [
-        "stage",
-        "outcome",
-        "submitted_proposal_text",
-        "submitted_variant_label",
-        "fit_score",
-        "fit_recommendation",
-        "fit_reasons",
-        "fit_concerns",
-        "fit_angle",
-        "fit_scored_at",
-    ]
-    present = [f for f in legacy_fields if f in job_columns]
+    present = [f for f in _LEGACY_JOB_STATE_COLUMNS if f in job_columns]
     if not present:
         return
 
