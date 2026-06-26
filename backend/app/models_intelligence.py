@@ -9,14 +9,20 @@ from app.models import Base
 
 
 class WinningProposal(Base):
-    """Past winning proposals used as style references for generation."""
+    """Past winning proposals used as style references for generation (per-user)."""
 
     __tablename__ = "winning_proposals"
     __table_args__ = (
-        UniqueConstraint("source_job_id", name="uq_winning_proposals_source_job_id"),
+        UniqueConstraint(
+            "user_id", "source_job_id", name="uq_winning_proposals_user_source_job_id"
+        ),
+        Index("ix_winning_proposals_user_id", "user_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     job_title: Mapped[str] = mapped_column(String(500), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     niche: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -35,9 +41,15 @@ class GenerationLog(Base):
     """One row per proposal pipeline run — replaces external experiment tracking."""
 
     __tablename__ = "generation_logs"
-    __table_args__ = (Index("ix_generation_logs_job_id", "job_id"),)
+    __table_args__ = (
+        Index("ix_generation_logs_job_id", "job_id"),
+        Index("ix_generation_logs_user_id", "user_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     job_id: Mapped[int] = mapped_column(Integer, nullable=False)
     ran_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -61,9 +73,13 @@ class ProposalPortfolioLink(Base):
     __table_args__ = (
         Index("ix_proposal_portfolio_links_generation_id", "generation_id"),
         Index("ix_proposal_portfolio_links_portfolio_item_id", "portfolio_item_id"),
+        Index("ix_proposal_portfolio_links_user_id", "user_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     generation_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("generation_logs.id", ondelete="CASCADE"),
@@ -95,9 +111,13 @@ class PortfolioOutcomeBoost(Base):
             name="uq_portfolio_outcome_boost",
         ),
         Index("ix_portfolio_outcome_boosts_job_id", "job_id"),
+        Index("ix_portfolio_outcome_boosts_user_id", "user_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     job_id: Mapped[int] = mapped_column(Integer, nullable=False)
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     portfolio_item_id: Mapped[int] = mapped_column(

@@ -39,6 +39,11 @@ class Settings(BaseSettings):
 
     webhook_secret: str = ""
 
+    # Auth (JWT). Set JWT_SECRET in the environment for stable sessions across restarts.
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
+
     @property
     def cors_origin_list(self) -> list[str]:
         """Localhost defaults + any CORS_ALLOW_ORIGINS entries, deduped (order preserved)."""

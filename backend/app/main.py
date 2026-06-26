@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import init_db
 from app.routes import (
+    auth,
     generations,
     ingest,
     jobs,
@@ -16,6 +17,7 @@ from app.routes import (
     settings as settings_routes,
     winning_proposals,
 )
+from app.security.auth import get_current_user
 
 config = get_settings()
 
@@ -42,15 +44,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(jobs.router)
-app.include_router(proposals.router)
+# Public routes (no auth): authentication, the extension webhook, and health.
+app.include_router(auth.router)
 app.include_router(ingest.router)
-app.include_router(maintenance.router)
-app.include_router(profiles.router)
-app.include_router(portfolio.router)
-app.include_router(generations.router)
-app.include_router(winning_proposals.router)
-app.include_router(settings_routes.router)
+
+# Protected routes (require a valid login token). The DATA stays shared for now —
+# per-user isolation is the next step; this just gates the portal behind auth.
+_auth_required = [Depends(get_current_user)]
+app.include_router(jobs.router, dependencies=_auth_required)
+app.include_router(proposals.router, dependencies=_auth_required)
+app.include_router(maintenance.router, dependencies=_auth_required)
+app.include_router(profiles.router, dependencies=_auth_required)
+app.include_router(portfolio.router, dependencies=_auth_required)
+app.include_router(generations.router, dependencies=_auth_required)
+app.include_router(winning_proposals.router, dependencies=_auth_required)
+app.include_router(settings_routes.router, dependencies=_auth_required)
 
 
 @app.get("/health")

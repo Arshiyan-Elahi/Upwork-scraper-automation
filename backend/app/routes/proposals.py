@@ -1,14 +1,13 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
-from app.db import get_db
 from app.intelligence.pipeline import run_proposal_pipeline
 from app.intelligence.profile import normalize_extracted, resolve_profile_for_pipeline
 from app.llm.errors import LLMConfigurationError
 from app.models import Job
 from app.schemas_proposals import GenerateProposalOptions
+from app.security.scoping import UserScope, get_scope
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +18,10 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 def generate_proposal_for_job(
     job_id: int,
     body: GenerateProposalOptions | None = None,
-    db: Session = Depends(get_db),
+    scope: UserScope = Depends(get_scope),
 ) -> dict:
-    """Run the full proposal pipeline for an ingested job."""
+    """Run the full proposal pipeline for an ingested job (scoped to current user)."""
+    db = scope.session
     job = db.query(Job).filter(Job.id == job_id).first()
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -34,7 +34,7 @@ def generate_proposal_for_job(
     }
 
     try:
-        profile_row = resolve_profile_for_pipeline(db, body.profile_id)
+        profile_row = resolve_profile_for_pipeline(db, scope.user_id, body.profile_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -46,6 +46,7 @@ def generate_proposal_for_job(
             job_id,
             profile,
             options,
+            user_id=scope.user_id,
             profile_id=profile_row.id,
         )
     except LLMConfigurationError as exc:

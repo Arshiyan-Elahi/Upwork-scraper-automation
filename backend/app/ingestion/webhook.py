@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from app.ingestion.job_urls import normalize_job_url
 from app.ingestion.stats import record_webhook_ingestion_run
 from app.ingestion.webhook_mapper import map_webhook_job
-from app.intelligence.job_fit import auto_score_new_jobs
 from app.models import Job
 
 logger = logging.getLogger(__name__)
@@ -176,12 +175,7 @@ def run_webhook_ingestion(session: Session, payload: dict[str, Any]) -> dict[str
 
     record_webhook_ingestion_run(session, summary)
 
-    # Best-effort LLM fit scoring for newly ingested jobs. Never blocks ingestion:
-    # if there's no active profile / no Gemini key / scoring fails, jobs stay unscored.
-    if added_jobs:
-        try:
-            auto_score_new_jobs(session, added_jobs)
-        except Exception:
-            logger.exception("Auto fit scoring failed for ingested jobs")
-
+    # NOTE: fit scoring is PER-USER and the webhook has no user context, so we no
+    # longer auto-score here. Each user scores fit themselves from their portal
+    # (Score Fit / Score All), writing to their own user_job_state.
     return summary

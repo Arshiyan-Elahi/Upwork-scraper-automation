@@ -1,5 +1,8 @@
-import { Menu, Moon, Search, Sun } from 'lucide-react'
+import { LogOut, Menu, Moon, Search, Sun } from 'lucide-react'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { APP_NAME } from '../../constants/branding'
+import { useAuth } from '../../context/AuthContext'
 import { useTheme } from '../../theme/ThemeProvider'
 import { AppLogo, Button } from '../ui'
 
@@ -15,6 +18,21 @@ export function TopHeader({
   onOpenMobileNav,
 }: TopHeaderProps) {
   const { theme, toggleTheme } = useTheme()
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  const email = user?.email ?? ''
+  const initials = email ? email.slice(0, 2).toUpperCase() : '?'
+
+  async function handleLogout() {
+    setLoggingOut(true)
+    try {
+      await logout()
+    } finally {
+      navigate('/login', { replace: true })
+    }
+  }
 
   return (
     <header className="glass-strong sticky top-0 z-30 flex h-16 shrink-0 items-center gap-4 border-b border-border/60 px-4 dark:border-border-dark/60 lg:px-6">
@@ -71,20 +89,28 @@ export function TopHeader({
         </Button>
 
         <div className="flex items-center gap-3 border-l border-border pl-3 dark:border-border-dark">
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-medium text-content dark:text-content-dark-default">
-              Alex Morgan
+          <div className="hidden max-w-[12rem] text-right sm:block">
+            <p className="truncate text-sm font-medium text-content dark:text-content-dark-default">
+              {email || 'Signed in'}
             </p>
-            <p className="text-xs text-content-muted dark:text-content-dark-muted">
-              Pro Freelancer
-            </p>
+            <p className="text-xs text-content-muted dark:text-content-dark-muted">Freelancer</p>
           </div>
           <div
             className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-brand text-sm font-semibold text-white shadow-soft"
             aria-hidden="true"
           >
-            AM
+            {initials}
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Log out"
+            title="Log out"
+            onClick={() => void handleLogout()}
+            disabled={loggingOut}
+          >
+            <LogOut className="h-5 w-5" />
+          </Button>
         </div>
       </div>
     </header>

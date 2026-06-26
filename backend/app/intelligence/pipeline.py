@@ -26,6 +26,7 @@ from app.intelligence.winning_proposals import (
 from app.llm.router import LLMRouter, get_llm_router
 from app.models import Job
 from app.models_intelligence import GenerationLog, WinningProposal
+from app.services.job_state import get_or_create_state
 
 logger = logging.getLogger(__name__)
 
@@ -487,21 +488,22 @@ def run_proposal_pipeline(
     profile: dict[str, Any],
     options: dict[str, Any] | None = None,
     *,
+    user_id: int,
     profile_id: int | None = None,
     router: LLMRouter | None = None,
 ) -> dict[str, Any]:
     """
-    Run the full proposal pipeline for a DB job.
+    Run the full proposal pipeline for a DB job, scoped to one user.
 
     Each step degrades gracefully — one LLM failure does not stop the run.
-    Persists a GenerationLog row before returning.
+    Persists a GenerationLog row (owned by the user) before returning.
     """
     options = options or {}
     n_variants = int(options.get("n_variants", 3))
     n_variants = max(1, min(5, n_variants))
     custom_instructions = str(options.get("custom_instructions") or "").strip()
 
-    llm = router or get_llm_router(session)
+    llm = router or get_llm_router(session, user_id)
     tracker = PipelineTracker()
     pipeline_start = time.perf_counter()
 
@@ -509,8 +511,13 @@ def run_proposal_pipeline(
     if job is None:
         raise ValueError(f"Job {job_id} not found")
 
-    # Load winning proposals and select relevant examples
-    all_winning = session.query(WinningProposal).order_by(WinningProposal.created_at.desc()).all()
+    # Load this user's winning proposals and select relevant examples
+    all_winning = (
+        session.query(WinningProposal)
+        .filter(WinningProposal.user_id == user_id)
+        .order_by(WinningProposal.created_at.desc())
+        .all()
+    )
     selected = select_winning_examples(job.title, job.skills, all_winning, limit=3)
     winning_payload = winning_examples_for_prompt(selected)
 
@@ -529,7 +536,7 @@ def run_proposal_pipeline(
         portfolio_start = time.perf_counter()
         try:
             portfolio_matches = match_portfolio(
-                session, job, profile_id, requirements
+                session, job, profile_id, requirements, user_id=user_id
             )
         except Exception:
             logger.exception("Portfolio match failed for job_id=%s", job_id)
@@ -546,7 +553,7 @@ def run_proposal_pipeline(
     bid = recommend_bid(job, profile, router=llm, tracker=tracker)
 
     # e. Generate proposals
-    voice_rules_text = load_proposal_voice_rules(session)
+    voice_rules_text = load_proposal_voice_rules(session, user_id)
     proposals = generate_proposals(
         job,
         profile,
@@ -574,8 +581,10 @@ def run_proposal_pipeline(
     total_latency = int((time.perf_counter() - pipeline_start) * 1000)
     overall_score = _overall_proposal_score(scored_proposals)
 
-    if job.stage == "found":
-        job.stage = "drafted"
+    # Advance THIS user's stage for the job (shared Job is never mutated here).
+    state = get_or_create_state(session, user_id, job_id)
+    if state.stage == "found":
+        state.stage = "drafted"
 
     result: dict[str, Any] = {
         "job_id": job_id,
@@ -601,6 +610,7 @@ def run_proposal_pipeline(
     }
 
     log_row = GenerationLog(
+        user_id=user_id,
         job_id=job_id,
         ran_at=datetime.now(timezone.utc),
         match_score=float(match_result.get("match_score", 0)),
@@ -617,7 +627,9 @@ def run_proposal_pipeline(
 
     if portfolio_matches:
         try:
-            record_proposal_portfolio_links(session, log_row.id, portfolio_matches)
+            record_proposal_portfolio_links(
+                session, log_row.id, portfolio_matches, user_id=user_id
+            )
         except Exception:
             logger.exception(
                 "Failed to record portfolio links for generation_id=%s", log_row.id

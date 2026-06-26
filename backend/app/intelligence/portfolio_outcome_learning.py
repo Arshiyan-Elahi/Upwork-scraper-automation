@@ -26,6 +26,8 @@ def record_proposal_portfolio_links(
     session: Session,
     generation_id: int,
     matches: list[dict],
+    *,
+    user_id: int,
 ) -> None:
     """Persist one row per attached portfolio link for a generation run."""
     for match in matches:
@@ -34,6 +36,7 @@ def record_proposal_portfolio_links(
             continue
         session.add(
             ProposalPortfolioLink(
+                user_id=user_id,
                 generation_id=generation_id,
                 portfolio_item_id=int(item_id),
                 match_score=float(match.get("match_score") or 0),
@@ -46,11 +49,14 @@ def apply_portfolio_outcome_boost(
     session: Session,
     job_id: int,
     outcome: str,
+    *,
+    user_id: int,
 ) -> int:
     """
-    Raise priority_score for portfolio items linked to this job's proposals.
+    Raise priority_score for the current user's portfolio items linked to this
+    job's proposals.
 
-    Idempotent per (job_id, outcome, portfolio_item_id). Returns count boosted.
+    Idempotent per (user_id, job_id, outcome, portfolio_item_id). Returns count boosted.
     """
     outcome_key = (outcome or "").strip().lower()
     if outcome_key not in LEARNING_OUTCOMES:
@@ -60,7 +66,7 @@ def apply_portfolio_outcome_boost(
     links = (
         session.query(ProposalPortfolioLink)
         .join(GenerationLog, ProposalPortfolioLink.generation_id == GenerationLog.id)
-        .filter(GenerationLog.job_id == job_id)
+        .filter(GenerationLog.job_id == job_id, GenerationLog.user_id == user_id)
         .all()
     )
     if not links:
@@ -72,6 +78,7 @@ def apply_portfolio_outcome_boost(
         already = (
             session.query(PortfolioOutcomeBoost)
             .filter(
+                PortfolioOutcomeBoost.user_id == user_id,
                 PortfolioOutcomeBoost.job_id == job_id,
                 PortfolioOutcomeBoost.outcome == outcome_key,
                 PortfolioOutcomeBoost.portfolio_item_id == item_id,
@@ -81,13 +88,18 @@ def apply_portfolio_outcome_boost(
         if already:
             continue
 
-        item = session.query(PortfolioItem).filter(PortfolioItem.id == item_id).first()
+        item = (
+            session.query(PortfolioItem)
+            .filter(PortfolioItem.id == item_id, PortfolioItem.user_id == user_id)
+            .first()
+        )
         if item is None:
             continue
 
         item.priority_score = (item.priority_score or 0) + boost
         session.add(
             PortfolioOutcomeBoost(
+                user_id=user_id,
                 job_id=job_id,
                 outcome=outcome_key,
                 portfolio_item_id=item_id,

@@ -11,16 +11,14 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.intelligence.profile import get_active_profile, normalize_extracted
+from app.intelligence.profile import normalize_extracted
 from app.llm.router import LLMRouter, get_llm_router
 from app.models import Job
-
-if TYPE_CHECKING:
-    from app.models_profile import Profile
+from app.services.job_state import get_or_create_state
 
 logger = logging.getLogger(__name__)
 
@@ -157,35 +155,38 @@ def score_job_fit(
     }
 
 
-def _apply_fit_to_job(job: Job, fit: dict[str, Any]) -> None:
-    job.fit_score = fit["fit_score"]
-    job.fit_recommendation = fit["recommendation"]
-    job.fit_reasons = fit["reasons"]
-    job.fit_concerns = fit["concerns"]
-    job.fit_angle = fit["suggested_angle"]
-    job.fit_scored_at = datetime.now(timezone.utc)
+def _apply_fit_to_state(state: Any, fit: dict[str, Any]) -> None:
+    state.fit_score = fit["fit_score"]
+    state.fit_recommendation = fit["recommendation"]
+    state.fit_reasons = fit["reasons"]
+    state.fit_concerns = fit["concerns"]
+    state.fit_angle = fit["suggested_angle"]
+    state.fit_scored_at = datetime.now(timezone.utc)
 
 
 def score_and_save_job_fit(
     session: Session,
+    user_id: int,
     job: Job,
     profile: dict[str, Any],
     *,
     router: LLMRouter | None = None,
     commit: bool = True,
 ) -> dict[str, Any]:
-    """Score a single job, persist the fit fields, and return the fit dict."""
-    llm = router or get_llm_router(session)
+    """Score a single job for one user, persist fit on their UserJobState."""
+    llm = router or get_llm_router(session, user_id)
     fit = score_job_fit(job, profile, router=llm)
-    _apply_fit_to_job(job, fit)
+    state = get_or_create_state(session, user_id, job.id)
+    _apply_fit_to_state(state, fit)
     if commit:
         session.commit()
-        session.refresh(job)
+        session.refresh(state)
     return fit
 
 
 def score_fit_for_jobs(
     session: Session,
+    user_id: int,
     jobs: list[Job],
     profile: dict[str, Any],
     *,
@@ -193,12 +194,12 @@ def score_fit_for_jobs(
     pause_seconds: float = 0.4,
 ) -> dict[str, Any]:
     """
-    Score a batch of jobs sequentially, degrading gracefully per job.
+    Score a batch of jobs for one user sequentially, degrading gracefully per job.
 
     One failure does not stop the batch. Runs sequentially with a small pause to
     respect Gemini rate limits. Commits once at the end.
     """
-    llm = router or get_llm_router(session)
+    llm = router or get_llm_router(session, user_id)
     scored = 0
     failed = 0
     errors: list[str] = []
@@ -206,7 +207,8 @@ def score_fit_for_jobs(
     for index, job in enumerate(jobs):
         try:
             fit = score_job_fit(job, profile, router=llm)
-            _apply_fit_to_job(job, fit)
+            state = get_or_create_state(session, user_id, job.id)
+            _apply_fit_to_state(state, fit)
             scored += 1
         except Exception as exc:  # noqa: BLE001 — degrade per job
             failed += 1
@@ -227,36 +229,3 @@ def score_fit_for_jobs(
             failed = len(jobs)
 
     return {"scored": scored, "failed": failed, "errors": errors}
-
-
-def auto_score_new_jobs(session: Session, jobs: list[Job]) -> None:
-    """
-    Best-effort fit scoring for freshly ingested jobs.
-
-    Never raises: if there is no active profile, no Gemini key, or scoring fails,
-    the jobs simply remain unscored. Runs sequentially to respect rate limits.
-    """
-    if not jobs:
-        return
-
-    try:
-        profile_row: Profile | None = get_active_profile(session)
-    except Exception:
-        logger.exception("auto_score_new_jobs: failed to load active profile")
-        return
-
-    if profile_row is None:
-        logger.info("auto_score_new_jobs: no active profile — skipping fit scoring")
-        return
-
-    profile = normalize_extracted(profile_row.extracted)
-
-    try:
-        result = score_fit_for_jobs(session, jobs, profile)
-        logger.info(
-            "auto_score_new_jobs: scored=%s failed=%s",
-            result["scored"],
-            result["failed"],
-        )
-    except Exception:
-        logger.exception("auto_score_new_jobs: batch scoring failed")

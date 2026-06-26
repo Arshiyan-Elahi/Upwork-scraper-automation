@@ -24,8 +24,9 @@ class LLMRouter:
     generate() → selected generation provider text completion
     """
 
-    def __init__(self, session: Session, settings: Settings | None = None) -> None:
+    def __init__(self, session: Session, user_id: int, settings: Settings | None = None) -> None:
         self._session = session
+        self._user_id = user_id
         self._settings = settings or get_settings()
         self.last_provider_used: str | None = None
 
@@ -42,7 +43,7 @@ class LLMRouter:
 
     def analyze(self, system: str, prompt: str, schema_hint: str) -> dict:
         """Structured analysis — always Gemini."""
-        api_key = resolve_provider_api_key(self._session, "gemini")
+        api_key = resolve_provider_api_key(self._session, self._user_id, "gemini")
         if not api_key:
             raise LLMConfigurationError(
                 "Gemini API key is not configured. Add it in Settings or set GEMINI_API_KEY in backend/.env."
@@ -55,11 +56,11 @@ class LLMRouter:
 
     def generate(self, system: str, prompt: str, temperature: float = 0.7) -> str:
         """Creative text — uses the active generation provider from settings."""
-        provider = get_generation_provider(self._session)
+        provider = get_generation_provider(self._session, self._user_id)
         if provider not in SUPPORTED_LLM_PROVIDERS:
             raise LLMConfigurationError(f"Unsupported generation provider: {provider}")
 
-        api_key = resolve_provider_api_key(self._session, provider)
+        api_key = resolve_provider_api_key(self._session, self._user_id, provider)
         if not api_key:
             raise LLMConfigurationError(
                 f"No API key configured for generation provider {provider!r}. "
@@ -80,5 +81,5 @@ class LLMRouter:
         return text
 
 
-def get_llm_router(session: Session) -> LLMRouter:
-    return LLMRouter(session)
+def get_llm_router(session: Session, user_id: int) -> LLMRouter:
+    return LLMRouter(session, user_id)

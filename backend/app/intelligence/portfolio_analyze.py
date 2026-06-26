@@ -136,6 +136,7 @@ def normalize_analyze_result(raw: dict[str, Any] | None) -> dict[str, Any]:
 def analyze_portfolio_item(
     session: Session,
     *,
+    user_id: int,
     title: str,
     url: str,
     description: str | None = None,
@@ -164,7 +165,7 @@ def analyze_portfolio_item(
         f"Description: {description or 'No description provided.'}\n"
     )
 
-    llm = router or get_llm_router(session)
+    llm = router or get_llm_router(session, user_id)
     try:
         raw = llm.analyze(ANALYZE_SYSTEM, prompt, ANALYZE_SCHEMA_HINT)
         return normalize_analyze_result(raw)

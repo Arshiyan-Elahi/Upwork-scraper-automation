@@ -86,6 +86,7 @@ def extract_profile(
     raw_text: str,
     *,
     session: Session,
+    user_id: int,
     router: LLMRouter | None = None,
 ) -> dict[str, Any]:
     """
@@ -98,7 +99,7 @@ def extract_profile(
     if not text:
         return normalize_extracted({})
 
-    llm = router or get_llm_router(session)
+    llm = router or get_llm_router(session, user_id)
     prompt = f"Extract profile fields from this freelancer profile text:\n\n{text}"
 
     try:
@@ -109,22 +110,32 @@ def extract_profile(
         raise
 
 
-def get_active_profile(session: Session) -> Profile | None:
+def get_active_profile(session: Session, user_id: int) -> Profile | None:
     from app.models_profile import Profile
 
-    return session.query(Profile).filter(Profile.is_active.is_(True)).first()
+    return (
+        session.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_active.is_(True))
+        .first()
+    )
 
 
-def resolve_profile_for_pipeline(session: Session, profile_id: int | None = None) -> Profile:
+def resolve_profile_for_pipeline(
+    session: Session, user_id: int, profile_id: int | None = None
+) -> Profile:
     from app.models_profile import Profile
 
     if profile_id is not None:
-        row = session.query(Profile).filter(Profile.id == profile_id).first()
+        row = (
+            session.query(Profile)
+            .filter(Profile.id == profile_id, Profile.user_id == user_id)
+            .first()
+        )
         if row is None:
             raise ValueError(f"Profile {profile_id} not found.")
         return row
 
-    row = get_active_profile(session)
+    row = get_active_profile(session, user_id)
     if row is None:
         raise ValueError("No active profile configured. Create a profile and set it active.")
     return row

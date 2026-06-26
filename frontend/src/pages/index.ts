@@ -1,4 +1,6 @@
 export { JobDetailPage } from './JobDetailPage'
+export { LoginPage } from './LoginPage'
+export { SignupPage } from './SignupPage'
 export { AnalyticsPage } from './AnalyticsPage'
 export { ApplyQueuePage } from './ApplyQueuePage'
 export { DashboardPage } from './DashboardPage'

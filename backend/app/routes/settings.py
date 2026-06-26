@@ -1,9 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
 
-from app.db import get_db
 from app.intelligence.proposal_rules import (
-    IMAGE_REJECTION_MESSAGE,
     extract_rules_text_from_bytes,
     get_proposal_voice_rules_for_api,
     save_proposal_voice_rules,
@@ -27,19 +24,20 @@ from app.schemas_settings import (
     ProposalRulesRead,
 )
 from app.security.encryption import EncryptionKeyMissingError
+from app.security.scoping import UserScope, get_scope
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 @router.get("/proposal-rules", response_model=ProposalRulesRead)
-def get_proposal_rules(db: Session = Depends(get_db)) -> ProposalRulesRead:
-    return ProposalRulesRead(text=get_proposal_voice_rules_for_api(db))
+def get_proposal_rules(scope: UserScope = Depends(get_scope)) -> ProposalRulesRead:
+    return ProposalRulesRead(text=get_proposal_voice_rules_for_api(scope.session, scope.user_id))
 
 
 @router.put("/proposal-rules", response_model=ProposalRulesRead)
 async def update_proposal_rules(
     request: Request,
-    db: Session = Depends(get_db),
+    scope: UserScope = Depends(get_scope),
 ) -> ProposalRulesRead:
     """
     Save proposal voice rules from typed text (JSON body) or an uploaded file.
@@ -70,7 +68,7 @@ async def update_proposal_rules(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        saved = save_proposal_voice_rules(db, text)
+        saved = save_proposal_voice_rules(scope.session, scope.user_id, text)
         return ProposalRulesRead(text=saved)
 
     if content_type.startswith("application/json"):
@@ -86,7 +84,7 @@ async def update_proposal_rules(
         if text is not None and not isinstance(text, str):
             raise HTTPException(status_code=400, detail='"text" must be a string.')
 
-        saved = save_proposal_voice_rules(db, text or "")
+        saved = save_proposal_voice_rules(scope.session, scope.user_id, text or "")
         return ProposalRulesRead(text=saved)
 
     raise HTTPException(
@@ -96,21 +94,23 @@ async def update_proposal_rules(
 
 
 @router.get("/llm", response_model=LlmSettingsRead)
-def get_llm_settings(db: Session = Depends(get_db)) -> LlmSettingsRead:
+def get_llm_settings(scope: UserScope = Depends(get_scope)) -> LlmSettingsRead:
     """Return configured LLM providers (masked) and the active generation provider."""
-    status = get_provider_status(db)
+    status = get_provider_status(scope.session, scope.user_id)
     providers = {
         provider: LlmProviderStatus(**status[provider])
         for provider in SUPPORTED_LLM_PROVIDERS
     }
     return LlmSettingsRead(
         providers=providers,
-        generation_provider=get_generation_provider(db),
+        generation_provider=get_generation_provider(scope.session, scope.user_id),
     )
 
 
 @router.put("/llm-keys", response_model=LlmKeySaveResponse)
-def save_llm_key(body: LlmKeySaveRequest, db: Session = Depends(get_db)) -> LlmKeySaveResponse:
+def save_llm_key(
+    body: LlmKeySaveRequest, scope: UserScope = Depends(get_scope)
+) -> LlmKeySaveResponse:
     """Encrypt and store a provider API key. Never returns the full key."""
     try:
         provider = normalize_provider(body.provider)
@@ -122,7 +122,7 @@ def save_llm_key(body: LlmKeySaveRequest, db: Session = Depends(get_db)) -> LlmK
         raise HTTPException(status_code=400, detail="api_key must not be empty.")
 
     try:
-        row = save_provider_key(db, provider, api_key)
+        row = save_provider_key(scope.session, scope.user_id, provider, api_key)
     except EncryptionKeyMissingError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -132,7 +132,7 @@ def save_llm_key(body: LlmKeySaveRequest, db: Session = Depends(get_db)) -> LlmK
 
 
 @router.delete("/llm-keys/{provider}")
-def delete_llm_key(provider: str, db: Session = Depends(get_db)) -> dict[str, object]:
+def delete_llm_key(provider: str, scope: UserScope = Depends(get_scope)) -> dict[str, object]:
     """Remove a stored provider API key."""
     try:
         normalized = normalize_provider(provider)
@@ -140,7 +140,7 @@ def delete_llm_key(provider: str, db: Session = Depends(get_db)) -> dict[str, ob
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        removed = delete_provider_key(db, normalized)
+        removed = delete_provider_key(scope.session, scope.user_id, normalized)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -152,7 +152,7 @@ def delete_llm_key(provider: str, db: Session = Depends(get_db)) -> dict[str, ob
 @router.put("/llm-provider", response_model=LlmSettingsRead)
 def update_llm_provider(
     body: LlmProviderUpdateRequest,
-    db: Session = Depends(get_db),
+    scope: UserScope = Depends(get_scope),
 ) -> LlmSettingsRead:
     """Set the active text-generation provider (must have a configured key)."""
     try:
@@ -160,23 +160,23 @@ def update_llm_provider(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if not provider_has_key(db, provider):
+    if not provider_has_key(scope.session, scope.user_id, provider):
         raise HTTPException(
             status_code=400,
             detail=f"No API key configured for provider {provider!r}.",
         )
 
     try:
-        set_generation_provider(db, provider)
+        set_generation_provider(scope.session, scope.user_id, provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    status = get_provider_status(db)
+    status = get_provider_status(scope.session, scope.user_id)
     providers = {
         name: LlmProviderStatus(**status[name])
         for name in SUPPORTED_LLM_PROVIDERS
     }
     return LlmSettingsRead(
         providers=providers,
-        generation_provider=get_generation_provider(db),
+        generation_provider=get_generation_provider(scope.session, scope.user_id),
     )

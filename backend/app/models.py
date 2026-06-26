@@ -9,6 +9,12 @@ class Base(DeclarativeBase):
 
 
 class Job(Base):
+    """Shared job record — objective data only, visible to ALL users.
+
+    Per-user state (stage, outcome, submitted proposal, fit scoring) lives in
+    UserJobState, NOT here. Ingested once via the extension webhook with no user.
+    """
+
     __tablename__ = "jobs"
     __table_args__ = (
         UniqueConstraint("job_url", name="uq_jobs_job_url"),
@@ -30,17 +36,6 @@ class Job(Base):
     client_spend: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     payment_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="found", index=True)
-    outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    submitted_proposal_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    submitted_variant_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # LLM-based job fit signal (separate from rule-based match_profile)
-    fit_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    fit_recommendation: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    fit_reasons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
-    fit_concerns: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
-    fit_angle: Mapped[str | None] = mapped_column(Text, nullable=True)
-    fit_scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -1,17 +1,21 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, JSON, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
 
 
 class Profile(Base):
-    """Freelancer profile — multiple rows, one active at a time."""
+    """Freelancer profile — per-user; multiple rows, one active per user."""
 
     __tablename__ = "profiles"
+    __table_args__ = (Index("ix_profiles_user_id", "user_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     raw_input: Mapped[str] = mapped_column(Text, nullable=False)
     extracted: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

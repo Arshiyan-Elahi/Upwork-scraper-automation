@@ -251,6 +251,7 @@ def match_portfolio(
     profile_id: int,
     requirements: dict[str, Any],
     *,
+    user_id: int,
     limit: int = 3,
     min_score: int = MATCH_THRESHOLD,
 ) -> list[dict[str, Any]]:
@@ -262,6 +263,7 @@ def match_portfolio(
     items = (
         session.query(PortfolioItem)
         .filter(
+            PortfolioItem.user_id == user_id,
             PortfolioItem.profile_id == profile_id,
             PortfolioItem.is_active.is_(True),
         )
