@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError } from './client'
+import { apiFetch } from './client'
 import type { LlmSettings } from '../types'
 
 export interface ProposalRulesResponse {
@@ -15,64 +15,26 @@ export function isRejectedRulesImageFile(file: File): boolean {
 export const PROPOSAL_RULES_ACCEPT = '.md,.txt,.skills,.pdf'
 
 export async function getProposalRules(): Promise<ProposalRulesResponse> {
-  const response = await fetch(`${API_BASE_URL}/settings/proposal-rules`, {
-    headers: { Accept: 'application/json' },
-  })
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`
-    try {
-      const body = (await response.json()) as { detail?: string }
-      if (body.detail) detail = body.detail
-    } catch {
-      // ignore
-    }
-    throw new ApiError(detail, response.status)
-  }
-  return (await response.json()) as ProposalRulesResponse
+  return apiFetch<ProposalRulesResponse>('/settings/proposal-rules')
 }
 
 export async function saveProposalRules(text: string): Promise<ProposalRulesResponse> {
-  const response = await fetch(`${API_BASE_URL}/settings/proposal-rules`, {
+  return apiFetch<ProposalRulesResponse>('/settings/proposal-rules', {
     method: 'PUT',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
   })
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`
-    try {
-      const body = (await response.json()) as { detail?: string }
-      if (body.detail) detail = body.detail
-    } catch {
-      // ignore
-    }
-    throw new ApiError(detail, response.status)
-  }
-  return (await response.json()) as ProposalRulesResponse
 }
 
 export async function uploadProposalRulesFile(file: File): Promise<ProposalRulesResponse> {
   const form = new FormData()
   form.append('file', file)
 
-  const response = await fetch(`${API_BASE_URL}/settings/proposal-rules`, {
+  // No Content-Type header: the browser sets the multipart boundary itself.
+  return apiFetch<ProposalRulesResponse>('/settings/proposal-rules', {
     method: 'PUT',
-    headers: { Accept: 'application/json' },
     body: form,
   })
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`
-    try {
-      const body = (await response.json()) as { detail?: string }
-      if (body.detail) detail = body.detail
-    } catch {
-      // ignore
-    }
-    throw new ApiError(detail, response.status)
-  }
-  return (await response.json()) as ProposalRulesResponse
 }
 
 export interface LlmKeySaveResponse {
@@ -81,55 +43,28 @@ export interface LlmKeySaveResponse {
   configured: boolean
 }
 
-async function parseSettingsError(response: Response): Promise<never> {
-  let detail = `Request failed (${response.status})`
-  try {
-    const body = (await response.json()) as { detail?: string }
-    if (body.detail) detail = typeof body.detail === 'string' ? body.detail : detail
-  } catch {
-    // ignore
-  }
-  throw new ApiError(detail, response.status)
-}
-
 export async function getLlmSettings(): Promise<LlmSettings> {
-  const response = await fetch(`${API_BASE_URL}/settings/llm`, {
-    headers: { Accept: 'application/json' },
-  })
-  if (!response.ok) await parseSettingsError(response)
-  return (await response.json()) as LlmSettings
+  return apiFetch<LlmSettings>('/settings/llm')
 }
 
 export async function saveLlmKey(provider: string, apiKey: string): Promise<LlmKeySaveResponse> {
-  const response = await fetch(`${API_BASE_URL}/settings/llm-keys`, {
+  return apiFetch<LlmKeySaveResponse>('/settings/llm-keys', {
     method: 'PUT',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, api_key: apiKey }),
   })
-  if (!response.ok) await parseSettingsError(response)
-  return (await response.json()) as LlmKeySaveResponse
 }
 
 export async function deleteLlmKey(provider: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/settings/llm-keys/${encodeURIComponent(provider)}`, {
+  await apiFetch<unknown>(`/settings/llm-keys/${encodeURIComponent(provider)}`, {
     method: 'DELETE',
-    headers: { Accept: 'application/json' },
   })
-  if (!response.ok) await parseSettingsError(response)
 }
 
 export async function setLlmGenerationProvider(provider: string): Promise<LlmSettings> {
-  const response = await fetch(`${API_BASE_URL}/settings/llm-provider`, {
+  return apiFetch<LlmSettings>('/settings/llm-provider', {
     method: 'PUT',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider }),
   })
-  if (!response.ok) await parseSettingsError(response)
-  return (await response.json()) as LlmSettings
 }
